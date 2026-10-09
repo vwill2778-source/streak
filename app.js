@@ -10,6 +10,7 @@
   var STORAGE_KEY = 'habit-tracker:v1';
   var DEFAULT_ICON = '\u{1F31F}'; // 🌟
   var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+  var MAX_ICON_GRAPHS = 8;
 
   /* ---------------- date helpers (local calendar days) ---------------- */
 
@@ -41,6 +42,70 @@
 
   function today() {
     return startOfDay(new Date());
+  }
+
+  /* ---------------- grapheme-safe icon text ----------------
+     Emoji can span several UTF-16 code units (surrogate pairs) and
+     several code points (ZWJ sequences, flags, skin tones). A naive
+     .slice(0, 8) can cut a pair in half and leave a lone surrogate
+     behind, which renders as a broken glyph, so icons are truncated by
+     grapheme cluster instead. */
+
+  var graphemeSegmenter =
+    typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
+      ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+      : null;
+
+  function isLoneSurrogate(str) {
+    if (str.length !== 1) return false;
+    var code = str.charCodeAt(0);
+    return code >= 0xd800 && code <= 0xdfff;
+  }
+
+  function toGraphemes(str) {
+    str = String(str);
+    var parts = null;
+    if (graphemeSegmenter) {
+      try {
+        parts = Array.from(graphemeSegmenter.segment(str), function (part) {
+          return part.segment;
+        });
+      } catch (err) {
+        parts = null; // fall back to code points below
+      }
+    }
+    if (!parts) {
+      parts = [];
+      for (var i = 0; i < str.length; i++) {
+        var code = str.charCodeAt(i);
+        if (code >= 0xd800 && code <= 0xdbff) {
+          var next = i + 1 < str.length ? str.charCodeAt(i + 1) : 0;
+          if (next >= 0xdc00 && next <= 0xdfff) {
+            parts.push(str.slice(i, i + 2));
+            i++;
+            continue;
+          }
+          continue; // lone high surrogate -> drop
+        }
+        if (code >= 0xdc00 && code <= 0xdfff) continue; // lone low surrogate -> drop
+        parts.push(str.charAt(i));
+      }
+    }
+    var out = [];
+    for (var j = 0; j < parts.length; j++) {
+      if (!isLoneSurrogate(parts[j])) out.push(parts[j]);
+    }
+    return out;
+  }
+
+  function truncateGraphemes(str, max) {
+    var parts = toGraphemes(str);
+    return parts.length > max ? parts.slice(0, max).join('') : parts.join('');
+  }
+
+  function sanitizeIcon(value) {
+    if (typeof value !== 'string') return '';
+    return truncateGraphemes(value.trim(), MAX_ICON_GRAPHS);
   }
 
   /* ---------------- streak logic ---------------- */
@@ -93,6 +158,20 @@
     return n === 1 ? '1 day' : n + ' days';
   }
 
+  /* Signature touch: a small celebration when today's check-in lands on a
+     round milestone — full weeks (7, 14, 21, …) and tens (10, 20, 30, …).
+     It only shows on the milestone day itself, and only once the day is
+     actually checked in, so the card earns it. */
+  function milestoneLabel(n, doneToday) {
+    if (!doneToday || n < 7) return null;
+    if (n % 7 === 0) {
+      var weeks = n / 7;
+      return n + '-day milestone — ' + (weeks === 1 ? 'a full week!' : weeks + ' full weeks!');
+    }
+    if (n % 10 === 0) return n + '-day milestone — keep it rolling!';
+    return null;
+  }
+
   /* ---------------- storage ---------------- */
 
   var memoryFallback = Object.create(null);
@@ -142,16 +221,12 @@
             if (DATE_RE.test(keys[j]) && h.done[keys[j]]) done[keys[j]] = true;
           }
         }
+        var icon = sanitizeIcon(h.icon);
         habits.push({
           id: typeof h.id === 'string' && h.id ? h.id : genId(),
           name: h.name.trim().slice(0, 60),
-          icon:
-            typeof h.icon === 'string' && h.icon.trim()
-              ? h.icon.trim().slice(0, 8)
-              : DEFAULT_ICON,
-          done: done,
-          createdAt:
-            typeof h.createdAt === 'string' ? h.createdAt : new Date().toISOString()
+          icon: icon || DEFAULT_ICON,
+          done: done
         });
       }
       return { habits: habits };
@@ -218,6 +293,42 @@
     if (els.live) els.live.textContent = message;
   }
 
+  function renderTodayLabel() {
+    els.todayLabel.textContent =
+      'Today · ' +
+      todayDate.toLocaleDateString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      });
+  }
+
+  /* "Today" used to be frozen at page load. Re-derive it whenever the page
+     regains focus or visibility so a tab left open past midnight (or across
+     a DST boundary) still shows the right day and week strip. */
+  function syncToday() {
+    var fresh = today();
+    if (toKey(fresh) === toKey(todayDate)) return false;
+    todayDate = fresh;
+    renderTodayLabel();
+    renderAllPreservingFocus();
+    announce(
+      'Now showing ' +
+        todayDate.toLocaleDateString(undefined, {
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric'
+        }) +
+        '.'
+    );
+    return true;
+  }
+
+  function onWake() {
+    if (document.visibilityState && document.visibilityState !== 'visible') return;
+    syncToday();
+  }
+
   function isDone(habit, key) {
     return !!(habit.done && habit.done[key]);
   }
@@ -254,8 +365,8 @@
     var info = el('div', 'habit-info');
     info.appendChild(el('h3', 'habit-name', habit.name));
     var meta = el('div', 'habit-meta');
-    meta.appendChild(el('span', 'streak-current', '🔥 ' + dayWord(cur)));
-    meta.appendChild(el('span', 'streak-longest', '🏆 Longest: ' + dayWord(best)));
+    meta.appendChild(el('span', 'badge badge-streak', '🔥 ' + dayWord(cur)));
+    meta.appendChild(el('span', 'badge badge-best', '🏆 Longest: ' + dayWord(best)));
     info.appendChild(meta);
 
     var del = button('Delete habit', 'delete-start', 'icon-btn delete-btn');
@@ -266,6 +377,23 @@
     head.appendChild(info);
     head.appendChild(del);
     li.appendChild(head);
+
+    /* streak milestone celebration (signature touch): check-in day only */
+    var milestone = milestoneLabel(cur, doneToday);
+    if (milestone) {
+      li.appendChild(el('p', 'milestone', '🎉 ' + milestone));
+    }
+
+    /* streak-at-risk nudge: only when there is a streak left to lose */
+    if (!doneToday && cur > 0) {
+      li.appendChild(
+        el(
+          'p',
+          'at-risk',
+          '🔥 Streak at risk — check in today to keep your ' + cur + '-day streak.'
+        )
+      );
+    }
 
     /* check-in */
     var check = button(
@@ -294,7 +422,13 @@
           d.toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 2)
         )
       );
-      cell.appendChild(el('span', 'day-box'));
+      var box = el('span', 'day-box');
+      if (cellDone) {
+        var mark = el('span', 'day-mark', '✓');
+        mark.setAttribute('aria-hidden', 'true');
+        box.appendChild(mark);
+      }
+      cell.appendChild(box);
       cell.title =
         d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) +
         ' — ' +
@@ -329,6 +463,20 @@
     renderSummary();
   }
 
+  // Re-render everything, restoring keyboard focus to the equivalent control
+  // so a background-tab date rollover never strands keyboard users.
+  function renderAllPreservingFocus() {
+    var active = document.activeElement;
+    var card = active && active.closest ? active.closest('.habit-card') : null;
+    var id = card ? card.dataset.id : null;
+    var action = active && active.dataset ? active.dataset.action : null;
+    renderAll();
+    if (!id || !action) return;
+    var fresh = els.list.querySelector('.habit-card[data-id="' + id + '"]');
+    var target = fresh ? fresh.querySelector('[data-action="' + action + '"]') : null;
+    if (target) target.focus();
+  }
+
   // Re-render a single card in place, keeping focus where it was.
   function refreshCard(habit) {
     var old = els.list.querySelector('.habit-card[data-id="' + habit.id + '"]');
@@ -350,15 +498,25 @@
     }
     var key = toKey(today());
     var doneCount = 0;
+    var atRiskCount = 0;
     for (var i = 0; i < state.habits.length; i++) {
-      if (isDone(state.habits[i], key)) doneCount++;
+      if (isDone(state.habits[i], key)) {
+        doneCount++;
+      } else if (currentStreak(state.habits[i]) > 0) {
+        atRiskCount++;
+      }
     }
     els.summary.textContent =
       state.habits.length +
       (state.habits.length === 1 ? ' habit' : ' habits') +
       ' · ' +
       doneCount +
-      ' done today';
+      ' done today' +
+      (atRiskCount
+        ? ' · ' +
+          atRiskCount +
+          (atRiskCount === 1 ? ' streak at risk' : ' streaks at risk')
+        : '');
     els.summary.hidden = false;
   }
 
@@ -372,12 +530,12 @@
   /* ---------------- actions ---------------- */
 
   function addHabit(name, icon) {
+    var safeIcon = sanitizeIcon(icon);
     state.habits.push({
       id: genId(),
       name: name.slice(0, 60),
-      icon: icon || DEFAULT_ICON,
-      done: Object.create(null),
-      createdAt: new Date().toISOString()
+      icon: safeIcon || DEFAULT_ICON,
+      done: Object.create(null)
     });
     save();
     renderAll();
@@ -489,18 +647,23 @@
   function init() {
     cacheDom();
 
-    els.todayLabel.textContent = 'Today · ' + todayDate.toLocaleDateString(undefined, {
-      weekday: 'short',
-      month: 'short',
-      day: 'numeric'
-    });
+    renderTodayLabel();
 
     els.form.addEventListener('submit', onSubmit);
     els.name.addEventListener('input', function () {
       if (!els.error.hidden && els.name.value.trim()) showFormError(false);
     });
+    // Browsers cap `maxlength` in code units, so a paste can leave a split
+    // surrogate pair; normalise on the way out of the field.
+    els.icon.addEventListener('change', function () {
+      var safe = sanitizeIcon(els.icon.value);
+      if (safe !== els.icon.value) els.icon.value = safe;
+    });
     els.list.addEventListener('click', onListClick);
     document.addEventListener('keydown', onKeydown);
+    document.addEventListener('visibilitychange', onWake);
+    window.addEventListener('focus', onWake);
+    window.addEventListener('pageshow', onWake);
     els.emptyCta.addEventListener('click', function () {
       els.name.focus();
       if (els.name.scrollIntoView) {
@@ -527,6 +690,10 @@
       addHabit: addHabit,
       toggleHabit: toggleHabit,
       deleteHabit: deleteHabit,
+      truncateGraphemes: truncateGraphemes,
+      sanitizeIcon: sanitizeIcon,
+      syncToday: syncToday,
+      milestoneLabel: milestoneLabel,
       getState: function () {
         return state;
       }

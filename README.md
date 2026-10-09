@@ -27,6 +27,8 @@ python3 -m http.server 8000
 - **Streak logic** — a streak is the number of consecutive calendar days
   completed. Miss a day and the current streak resets to 0; your longest streak
   is kept forever. Today isn't counted as missed until it's actually past.
+- **Streak milestones** — checking in on a round milestone (a full week, two
+  weeks, tens of days…) pops a small 🎉 celebration on that day's card.
 - **Delete a habit** — with an inline confirmation step (Escape or Cancel aborts).
 - **Persistence** — everything lives in `localStorage`; state survives reloads
   and closed tabs. If storage is unavailable (some browsers on `file://`,
