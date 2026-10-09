@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="A tiny local-only habit tracker: add habits, check in daily, keep your streak alive.">
+  <title>Habit Tracker</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">🌱</span>
+        <div>
+          <h1>Habit Tracker</h1>
+          <p class="tagline">Small steps, every day.</p>
+        </div>
+      </div>
+      <p class="today-label" id="todayLabel"></p>
+    </header>
+
+    <main>
+      <section class="card add-card" aria-labelledby="newHabitHeading">
+        <h2 id="newHabitHeading">New habit</h2>
+        <form id="habitForm" novalidate>
+          <div class="field-row">
+            <div class="field field-grow">
+              <label for="habitName">Habit name <span class="req" aria-hidden="true">*</span></label>
+              <input type="text" id="habitName" name="habitName" maxlength="60"
+                     placeholder="e.g. Read 20 minutes" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="field field-icon">
+              <label for="habitIcon">Icon</label>
+              <input type="text" id="habitIcon" name="habitIcon" maxlength="8"
+                     placeholder="🔥" autocomplete="off" spellcheck="false" aria-describedby="iconHint">
+              <span class="hint" id="iconHint">optional</span>
+            </div>
+          </div>
+          <p class="form-error" id="formError" role="alert" hidden>Please give your habit a name.</p>
+          <button type="submit" class="btn btn-primary btn-block">Add habit</button>
+        </form>
+      </section>
+
+      <section class="habits-section" aria-labelledby="yourHabitsHeading">
+        <div class="section-head">
+          <h2 id="yourHabitsHeading">Your habits</h2>
+          <p class="summary" id="summary" hidden></p>
+        </div>
+
+        <div class="empty-state" id="emptyState" hidden>
+          <span class="empty-icon" aria-hidden="true">🌿</span>
+          <h3>No habits yet</h3>
+          <p>Pick one small thing you want to do every day.<br>Check in daily and watch your streak grow.</p>
+          <button type="button" class="btn btn-primary" id="emptyCta">Add your first habit</button>
+        </div>
+
+        <ul class="habit-list" id="habitList"></ul>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <p>Everything is saved in your browser&rsquo;s localStorage &mdash; no account, no server, no sync.</p>
+    </footer>
+  </div>
+
+  <p class="visually-hidden" id="liveStatus" role="status" aria-live="polite"></p>
+
+  <script src="app.js"></script>
+</body>
+</html>
